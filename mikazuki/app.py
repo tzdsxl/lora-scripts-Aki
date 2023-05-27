@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 
 import toml
 
+from mikazuki.tasks import tm
 from mikazuki.models import TaggerInterrogateRequest
 from mikazuki.tagger.interrogator import available_interrogators, on_interrogate
 
@@ -35,23 +36,24 @@ def _hooked_guess_type(*args, **kwargs):
 starlette_responses.guess_type = _hooked_guess_type
 
 
-def run_train(toml_path: str):
-    print(f"Training started with config file / 训练开始，使用配置文件: {toml_path}")
-    args = [
-        sys.executable, "-m", "accelerate.commands.launch", "--num_cpu_threads_per_process", "8",
-        "./sd-scripts/train_network.py",
-        "--config_file", toml_path,
-    ]
-    try:
-        result = subprocess.run(args, env=os.environ)
-        if result.returncode != 0:
-            print(f"Training failed / 训练失败")
-        else:
-            print(f"Training finished / 训练完成")
-    except Exception as e:
-        print(f"An error occurred when training / 创建训练进程时出现致命错误: {e}")
-    finally:
-        lock.release()
+# def run_train(toml_path: str):
+#     print(f"Training started with config file / 训练开始，使用配置文件: {toml_path}")
+#     args = [
+#         sys.executable, "-m", "accelerate.commands.launch", "--num_cpu_threads_per_process", "8",
+#         "./sd-scripts/train_network.py",
+#         "--config_file", toml_path,
+#     ]
+#     return tm.create_task(args)
+#     # try:
+#     #     result = subprocess.run(args, env=os.environ)
+#     #     if result.returncode != 0:
+#     #         print(f"Training failed / 训练失败")
+#     #     else:
+#     #         print(f"Training finished / 训练完成")
+#     # except Exception as e:
+#     #     print(f"An error occurred when training / 创建训练进程时出现致命错误: {e}")
+#     # finally:
+#     #     lock.release()
 
 
 @app.middleware("http")
@@ -70,12 +72,20 @@ async def create_toml_file(request: Request, background_tasks: BackgroundTasks):
         return {"status": "fail", "detail": "Training is already running"}
 
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    toml_file = os.path.join(os.getcwd(), f"toml", "autosave", f"{timestamp}.toml")
+    toml_path = os.path.join(os.getcwd(), f"toml", "autosave", f"{timestamp}.toml")
     toml_data = await request.body()
     j = json.loads(toml_data.decode("utf-8"))
-    with open(toml_file, "w") as f:
+    with open(toml_path, "w") as f:
         f.write(toml.dumps(j))
-    background_tasks.add_task(run_train, toml_file)
+
+    args = [
+        sys.executable, "-m", "accelerate.commands.launch", "--num_cpu_threads_per_process", "8",
+        "./sd-scripts/train_network.py",
+        "--config_file", toml_path,
+    ]
+
+    task_id = tm.create_task(args)
+    background_tasks.add_task(tm.wait_for_process, task_id)
     return {"status": "success"}
 
 
@@ -104,6 +114,9 @@ async def run_interrogate(req: TaggerInterrogateRequest, background_tasks: Backg
                               )
     return {"status": "success"}
 
+@app.get("/api/get_tasks")
+async def get_tasks():
+    return tm.json()
 
 @app.get("/")
 async def index():
