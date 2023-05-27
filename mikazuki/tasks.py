@@ -1,11 +1,22 @@
-import uuid
-import threading
 import subprocess
-import asyncio
-from typing import Dict, List
+import sys
+import threading
+import uuid
 from enum import Enum
-from starlette.concurrency import run_in_threadpool
+from typing import Dict
 
+import psutil
+
+
+def kill_proc_tree(pid, including_parent=True):
+    parent = psutil.Process(pid)
+    children = parent.children(recursive=True)
+    for child in children:
+        child.kill()
+    gone, still_alive = psutil.wait_procs(children, timeout=5)
+    if including_parent:
+        parent.kill()
+        parent.wait(5)
 
 class TaskStatus(Enum):
     CREATED = 0
@@ -30,7 +41,11 @@ class Task:
         self.process = subprocess.Popen(self.command)
 
     def terminate(self):
-        self.process.kill()
+        try:
+            kill_proc_tree(self.process.pid, False)
+        except Exception as e:
+            print(f"Error when killing process: {e}")
+            return
         self.status = TaskStatus.TERMINATED
 
 
@@ -38,13 +53,13 @@ class TaskManager:
     def __init__(self, max_concurrent=1) -> None:
         self.max_concurrent = max_concurrent
         self.tasks: Dict[Task] = {}
-        # self.tasks: List[Task] = []
 
     def create_task(self, command):
-        if len(self.tasks) >= self.max_concurrent:
+        running_tasks = [t for _, t in self.tasks.items() if t.status == TaskStatus.RUNNING]
+        if len(running_tasks) >= self.max_concurrent:
             print("Too many tasks running")
             return None
-        task_id = uuid.uuid4()
+        task_id = str(uuid.uuid4())
         task = Task(task_id=task_id, command=command)
         self.tasks[task_id] = task
         task.execute()
@@ -55,12 +70,14 @@ class TaskManager:
         self.tasks[task_id] = task
 
     def terminate_task(self, task_id: str):
-        task = self.tasks[task_id]
-        task.terminate()
+        if task_id in self.tasks:
+            task = self.tasks[task_id]
+            task.terminate()
 
     def wait_for_process(self, task_id: str):
-        task: Task = self.tasks[task_id]
-        task.wait()
+        if task_id in self.tasks:
+            task: Task = self.tasks[task_id]
+            task.wait()
 
     def json(self):
         return {
