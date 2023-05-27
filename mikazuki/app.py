@@ -65,11 +65,11 @@ async def add_cache_control_header(request, call_next):
 
 @app.post("/api/run")
 async def create_toml_file(request: Request, background_tasks: BackgroundTasks):
-    acquired = lock.acquire(blocking=False)
+    # acquired = lock.acquire(blocking=False)
 
-    if not acquired:
-        print("Training is already running / 已有正在进行的训练")
-        return {"status": "fail", "detail": "Training is already running"}
+    # if not acquired:
+    #     print("Training is already running / 已有正在进行的训练")
+    #     return {"status": "fail", "detail": "Training is already running"}
 
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     toml_path = os.path.join(os.getcwd(), f"toml", "autosave", f"{timestamp}.toml")
@@ -114,9 +114,15 @@ async def run_interrogate(req: TaggerInterrogateRequest, background_tasks: Backg
                               )
     return {"status": "success"}
 
-@app.get("/api/get_tasks")
+@app.get("/api/tasks/get_all")
 async def get_tasks():
     return tm.json()
+
+@app.post("/api/tasks/terminate")
+async def terminate_task(task_id: str):
+    tm.terminate_task(task_id)
+    tasks = tm.json()
+    return {"status": "success", "tasks": tasks["tasks"]}
 
 @app.get("/")
 async def index():
